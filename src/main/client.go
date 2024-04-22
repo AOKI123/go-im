@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"aoki.com/go-im/src/model"
 	"github.com/gorilla/websocket"
@@ -30,7 +31,7 @@ func main() {
 	header := http.Header{
 		"X-TOKEN": []string{token},
 	}
-	conn, _, err := websocket.DefaultDialer.Dial(uri, header)
+	conn, err := connect(uri, header)
 	if err != nil {
 		log.Fatal("dial failed:", err)
 	}
@@ -41,8 +42,18 @@ func main() {
 			m := &model.Message{}
 			err = conn.ReadJSON(m)
 			if err != nil {
+				// server shutdown or socket closed
+				if isClosed(err) {
+					// reconnect
+					log.Println("Trying reconnect ...")
+					conn, err = connect(uri, header)
+					if err != nil {
+						log.Fatalln("Reconnect Failed...", err)
+						return
+					}
+				}
 				log.Println("Read WS message failed:", err)
-				return
+				continue
 			}
 			log.Printf("Received Message %v From %v \n", m.Data, m.FromUserID)
 			err = markMsgRead(*m, token)
@@ -73,6 +84,39 @@ func main() {
 	if err := scanner.Err(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func connect(url string, header http.Header) (*websocket.Conn, error) {
+	var (
+		conn *websocket.Conn
+		err  error
+	)
+	maxRetries := 5
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		conn, _, err = websocket.DefaultDialer.Dial(url, header)
+		if err == nil {
+			log.Println("connected to server ...")
+			return conn, nil
+		}
+		if attempt < maxRetries-1 {
+			// 失败后的延迟
+			time.Sleep(time.Second)
+		}
+	}
+	return nil, err
+}
+
+func isClosed(err error) bool {
+	closedCodes := []int{websocket.CloseGoingAway, websocket.CloseAbnormalClosure}
+	if e, ok := err.(*websocket.CloseError); ok {
+		for _, code := range closedCodes {
+			if e.Code == code {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func markMsgRead(m model.Message, token string) (err error) {
