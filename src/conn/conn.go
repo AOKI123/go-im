@@ -1,8 +1,12 @@
 package conn
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"sync"
 
 	"aoki.com/go-im/src/model"
@@ -31,32 +35,52 @@ func (m *ConnManager) FindConn(userID int64) *websocket.Conn {
 }
 
 func (m *ConnManager) AddConn(userID int64, conn *websocket.Conn) {
+	// 保存本地
 	m.connections.Store(userID, conn)
+	// 保存当前连接的服务器信息
+	err := SetRedisKV(UserConnKey(userID), model.CurrServer.ServerAddr())
+	if err != nil {
+		log.Printf("Save conn of %d to redis failed:\n %v\n", userID, err)
+	}
 }
 
 func (m *ConnManager) DelConn(userID int64) {
+	// 删除本地记录
 	m.connections.Delete(userID)
+	// 删除Redis中的信息
+	err := DelRedisKey(UserConnKey(userID))
+	if err != nil {
+		log.Printf("Del conn of %d to redis failed:\n %v\n", userID, err)
+	}
 }
 
-type Sender interface {
-	Send(msg model.Message)
-	SendUnRead(userID int64)
+func UserConnKey(userID int64) string {
+	return fmt.Sprintf("conn:%d", userID)
 }
 
-type LocalSender struct {
+type Sender struct {
 }
 
-func (sender *LocalSender) Send(msg *model.Message) error {
+func (sender *Sender) Send(msg *model.Message) error {
 	// 保存数据库
 	repo.MessageRepoOps.Create(msg)
 	conn := GetConnManager().FindConn(msg.ToUserID)
 	if conn == nil {
+		// 本地没有，查询redis
+		address, err := GetRedisVal(UserConnKey(msg.ToUserID))
+		if err != nil {
+			return nil
+		}
+		// call http send
+		if len(address) > 0 {
+			return sender.callRemoteSend(msg, address)
+		}
 		return fmt.Errorf("%v does not online", msg.ToUserID)
 	}
 	return conn.WriteJSON(msg)
 }
 
-func (LocalSender) SendUnRead(userID int64, conn *websocket.Conn) error {
+func (Sender) SendUnRead(userID int64, conn *websocket.Conn) error {
 	// 获取当前用户未读的消息
 	messages := repo.MessageRepoOps.FindUnRead(userID)
 	if len(messages) == 0 {
@@ -68,4 +92,38 @@ func (LocalSender) SendUnRead(userID int64, conn *websocket.Conn) error {
 		err = conn.WriteJSON(msg)
 	}
 	return err
+}
+
+func (Sender) callRemoteSend(msg *model.Message, remoteAddr string) (err error) {
+	var (
+		bodyBytes []byte
+		req       *http.Request
+		resp      *http.Response
+	)
+	bodyBytes, err = json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	// 创建一个请求体，这里使用的是JSON格式的数据
+	body := bytes.NewBufferString(string(bodyBytes))
+	url := fmt.Sprintf("http://%s/send", remoteAddr)
+	log.Printf("call POST %s", url)
+	req, err = http.NewRequest("POST", url, body)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// 使用http.DefaultClient.Do方法来发送请求
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	// 读取响应体
+	bodyBytes, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+	log.Printf("call remote send resp: %s \n", string(bodyBytes))
+	return
 }

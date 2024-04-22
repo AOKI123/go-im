@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -16,8 +17,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var serverPort int = 8848
+
 func main() {
-	uri := "ws://localhost:8848/ws"
+	uri := fmt.Sprintf("ws://localhost:%d/ws", serverPort)
 	args := os.Args[1:]
 	userID, er := strconv.ParseInt(args[0], 10, 64)
 	if er != nil {
@@ -51,6 +54,7 @@ func main() {
 						log.Fatalln("Reconnect Failed...", err)
 						return
 					}
+					continue
 				}
 				log.Println("Read WS message failed:", err)
 				continue
@@ -123,7 +127,9 @@ func markMsgRead(m model.Message, token string) (err error) {
 	}
 	// 创建一个请求体，这里使用的是JSON格式的数据
 	body := bytes.NewBufferString(string(bodyBytes))
-	req, err = http.NewRequest("POST", "http://localhost:8848/markRead", body)
+	url := fmt.Sprintf("http://localhost:%d/markRead", serverPort)
+	log.Printf("call POST %s", url)
+	req, err = http.NewRequest("POST", url, body)
 	if err != nil {
 		return
 	}

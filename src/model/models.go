@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -38,6 +39,17 @@ func (u User) GenToken() string {
 		return ""
 	}
 	return base64.StdEncoding.EncodeToString(jsonBytes)
+}
+
+type ServerInfo struct {
+	Host string
+	Port int
+}
+
+var CurrServer ServerInfo = ServerInfo{}
+
+func (s *ServerInfo) ServerAddr() string {
+	return fmt.Sprintf("%s:%d", s.Host, s.Port)
 }
 
 type Message struct {
