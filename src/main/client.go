@@ -107,16 +107,8 @@ func connect(url string, header http.Header) (*websocket.Conn, error) {
 }
 
 func isClosed(err error) bool {
-	closedCodes := []int{websocket.CloseGoingAway, websocket.CloseAbnormalClosure}
-	if e, ok := err.(*websocket.CloseError); ok {
-		for _, code := range closedCodes {
-			if e.Code == code {
-				return true
-			}
-		}
-		return false
-	}
-	return false
+	_, ok := err.(*websocket.CloseError)
+	return ok
 }
 
 func markMsgRead(m model.Message, token string) (err error) {
