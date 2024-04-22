@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type User struct {
@@ -39,12 +41,27 @@ func (u User) GenToken() string {
 }
 
 type Message struct {
-	ID         int64
+	ID         int64 `gorm:"primarykey"`
 	Type       string
 	FromUserID int64
 	ToUserID   int64
 	Read       bool
-	SendTime   time.Time
-	ReadTime   time.Time
-	Data       interface{}
+	SendTime   *time.Time
+	ReadTime   *time.Time
+	Data       string
+}
+
+// 通过为结构体添加 TableName 字段来指定表名
+func (Message) TableName() string {
+	return "instant_message"
+}
+
+// gorm钩子函数，insert之前触发
+func (m *Message) BeforeCreate(tx *gorm.DB) error {
+	// 自动填充发送时间
+	if m.SendTime == nil {
+		Now := time.Now()
+		m.SendTime = &Now
+	}
+	return nil
 }

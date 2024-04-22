@@ -2,9 +2,11 @@ package conn
 
 import (
 	"fmt"
+	"log"
 	"sync"
 
 	"aoki.com/go-im/src/model"
+	"aoki.com/go-im/src/repo"
 	"github.com/gorilla/websocket"
 )
 
@@ -38,15 +40,32 @@ func (m *ConnManager) DelConn(userID int64) {
 
 type Sender interface {
 	Send(msg model.Message)
+	SendUnRead(userID int64)
 }
 
 type LocalSender struct {
 }
 
-func (sender *LocalSender) Send(msg model.Message) error {
+func (sender *LocalSender) Send(msg *model.Message) error {
+	// 保存数据库
+	repo.MessageRepoOps.Create(msg)
 	conn := GetConnManager().FindConn(msg.ToUserID)
 	if conn == nil {
 		return fmt.Errorf("%v does not online", msg.ToUserID)
 	}
 	return conn.WriteJSON(msg)
+}
+
+func (LocalSender) SendUnRead(userID int64, conn *websocket.Conn) error {
+	// 获取当前用户未读的消息
+	messages := repo.MessageRepoOps.FindUnRead(userID)
+	if len(messages) == 0 {
+		return nil
+	}
+	log.Printf("Send unread to %d", userID)
+	var err error
+	for _, msg := range messages {
+		err = conn.WriteJSON(msg)
+	}
+	return err
 }
