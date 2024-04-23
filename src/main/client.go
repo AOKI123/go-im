@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,7 +40,10 @@ func main() {
 		log.Fatal("dial failed:", err)
 	}
 	defer conn.Close()
-
+	connChan := make(chan *websocket.Conn, 1)
+	connChan <- conn
+	// 发送心跳
+	go ping(connChan)
 	go func() {
 		for {
 			m := &model.Message{}
@@ -54,6 +58,7 @@ func main() {
 						log.Fatalln("Reconnect Failed...", err)
 						return
 					}
+					connChan <- conn
 					continue
 				}
 				log.Println("Read WS message failed:", err)
@@ -148,4 +153,29 @@ func markMsgRead(m model.Message, token string) (err error) {
 	}
 	log.Printf("markRead resp: %s \n", string(bodyBytes))
 	return
+}
+
+func ping(connChan chan *websocket.Conn) {
+	// 创建一个context用于取消发送ping的定时任务
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// 定时发送ping消息
+	ticker := time.NewTicker(7 * time.Second)
+	defer ticker.Stop()
+	conn := <-connChan
+	for {
+		select {
+		// 连接重置时，重新赋值
+		case conn = <-connChan:
+		case <-ticker.C:
+			// 发送ping消息
+			log.Println("Send ping...")
+			err := conn.WriteMessage(websocket.PingMessage, []byte("Ping"))
+			if err != nil {
+				log.Println("Failed to send ping:", err)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }

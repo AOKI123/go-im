@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"aoki.com/go-im/src/conn"
 	"aoki.com/go-im/src/model"
@@ -44,19 +47,66 @@ func ws(c *gin.Context) {
 	if err != nil {
 		log.Printf("Send Unread to %s failed... \n", user.Name, err)
 	}
-	for {
-		v := &model.Message{}
-		err = conn.ReadJSON(v)
-		if err != nil {
-			if isConnClosed(err) {
-				break
+	// 设置一个通道用于接收ping消息
+	pingChan := make(chan string)
+	conn.SetPingHandler(func(ping string) error {
+		log.Printf("Received Ping %s ...", string(ping))
+		pingChan <- ping
+		return conn.WriteMessage(websocket.PongMessage, []byte("Pong"))
+	})
+	// 用于接收JSON消息
+	jsonChan := make(chan *model.Message)
+	// 接收ping消息
+	go func() {
+		defer close(pingChan)
+		defer close(jsonChan)
+		for {
+			// 读取WebSocket消息
+			mt, message, err := conn.ReadMessage()
+			if err != nil {
+				if isConnClosed(err) {
+					return
+				}
+				log.Println("Read Message Failed", err)
 			}
-			log.Println("Read Json Message Failed", err)
+			// 如果收到ping消息，通过通道发送
+			switch mt {
+			case websocket.BinaryMessage:
+				fallthrough
+			case websocket.TextMessage:
+				v := &model.Message{}
+				json.Unmarshal(message, v)
+				jsonChan <- v
+			case websocket.CloseMessage:
+				log.Printf("Read CloseMessage %s", string(message))
+				return
+			default:
+				log.Printf("Read OtherMessage %s, Type: %s", string(message), mt)
+				continue
+			}
 		}
-		err = Sender.Send(v)
-		if err != nil {
-			log.Println("Send Message Failed", err)
+	}()
+LOOP:
+	for {
+		select {
+		case v := <-jsonChan:
+			err = Sender.Send(v)
+			if err != nil {
+				log.Println("Send Message Failed", err)
+			}
+		case p := <-pingChan:
+			// 往redis添加TTL
+			ConnManager.SetConnTTL(user.ID)
+			// 回复Pong
+			err = conn.WriteMessage(websocket.PongMessage, []byte(p))
+		case <-time.After(6 * time.Second):
+			// 如果6秒内没有收到任何消息，结束
+			err = errors.New("ping timeout")
+			break LOOP
 		}
+	}
+	if err != nil {
+		log.Println("caught an unexpected err:", err)
 	}
 }
 
@@ -110,7 +160,10 @@ func OnDisconnect(user model.User) {
 
 func isConnClosed(err error) bool {
 	_, ok := err.(*websocket.CloseError)
-	return ok
+	if ok {
+		return true
+	}
+	return strings.Contains(err.Error(), "use of closed network connection")
 }
 
 func main() {

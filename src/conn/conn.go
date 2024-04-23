@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"aoki.com/go-im/src/model"
 	"aoki.com/go-im/src/repo"
@@ -38,7 +39,18 @@ func (m *ConnManager) AddConn(userID int64, conn *websocket.Conn) {
 	// 保存本地
 	m.connections.Store(userID, conn)
 	// 保存当前连接的服务器信息
-	err := SetRedisKV(UserConnKey(userID), model.CurrServer.ServerAddr())
+	err := SetRedisKVWithTTL(UserConnKey(userID), model.CurrServer.ServerAddr(), 5*time.Second)
+	if err != nil {
+		log.Printf("Save conn of %d to redis failed:\n %v\n", userID, err)
+	}
+}
+
+func (m *ConnManager) SetConnTTL(userID int64) {
+	conn := m.FindConn(userID)
+	if conn == nil {
+		return
+	}
+	err := SetRedisKVWithTTL(UserConnKey(userID), model.CurrServer.ServerAddr(), 5*time.Second)
 	if err != nil {
 		log.Printf("Save conn of %d to redis failed:\n %v\n", userID, err)
 	}

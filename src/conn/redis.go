@@ -2,6 +2,7 @@ package conn
 
 import (
 	"log"
+	"time"
 
 	"github.com/go-redis/redis"
 )
@@ -26,6 +27,10 @@ func init() {
 
 func SetRedisKV(k string, v string) error {
 	return client.Set(k, v, 0).Err()
+}
+
+func SetRedisKVWithTTL(k string, v string, ttl time.Duration) error {
+	return client.Set(k, v, ttl).Err()
 }
 
 func GetRedisVal(k string) (string, error) {
