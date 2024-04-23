@@ -52,6 +52,7 @@ func ws(c *gin.Context) {
 	conn.SetPingHandler(func(ping string) error {
 		log.Printf("Received Ping %s ...", string(ping))
 		pingChan <- ping
+		// 回复Pong
 		return conn.WriteMessage(websocket.PongMessage, []byte("Pong"))
 	})
 	// 用于接收JSON消息
@@ -94,11 +95,9 @@ LOOP:
 			if err != nil {
 				log.Println("Send Message Failed", err)
 			}
-		case p := <-pingChan:
+		case <-pingChan:
 			// 往redis添加TTL
 			ConnManager.SetConnTTL(user.ID)
-			// 回复Pong
-			err = conn.WriteMessage(websocket.PongMessage, []byte(p))
 		case <-time.After(6 * time.Second):
 			// 如果6秒内没有收到任何消息，结束
 			err = errors.New("ping timeout")
